@@ -1,0 +1,29 @@
+{
+  "name": "gifgrab",
+  "version": "0.3.1",
+  "description": "Cross-platform batch animation collector and converter",
+  "main": "main.js",
+  "author": "Good Tools",
+  "license": "UNLICENSED",
+  "scripts": {
+    "start": "electron .",
+    "dist:mac": "electron-builder --mac zip --arm64",
+    "dist:win": "electron-builder --win portable --x64"
+  },
+  "devDependencies": {
+    "electron": "latest",
+    "electron-builder": "latest"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["electron-winstaller"]
+  },
+  "build": {
+    "appId": "ca.goodtools.gifgrab",
+    "productName": "GifGrab",
+    "asar": true,
+    "files": ["main.js", "ui/**/*", "package.json"],
+    "extraResources": [{"from": "resources/ffmpeg", "to": "ffmpeg"}],
+    "mac": {"category": "public.app-category.utilities", "target": ["zip"], "icon": "resources/GifGrab.icns"},
+    "win": {"target": ["portable"], "artifactName": "GifGrab-Windows-${version}.${ext}", "icon": "resources/GifGrab.ico"}
+  }
+}
