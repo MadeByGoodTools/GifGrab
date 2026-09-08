@@ -1,4 +1,4 @@
-# GifGrab 0.3.1
+# GifGrab
 
 GifGrab is a local Mac and Windows batch downloader with Chrome and Edge collectors. It has an optimized adapter for the current `sex.com/en/gifs` structure and a generic adapter for similar thumbnail-grid sites whose cards open animation detail pages.
 
