@@ -259,8 +259,10 @@ async function processJob(job) {
   }
   job.sourceUrl = resolved.source;
   const pageId = (job.pageUrl.match(/\/gifs\/(\d+)/) || [])[1] || idFor(resolved.source);
-  const name = `${safeName(job.title || resolved.title, `gif-${pageId}`)} [${pageId}]`;
+  let name = `${safeName(job.title || resolved.title, `gif-${pageId}`)} [${pageId}]`;
   const extension = (new URL(resolved.source).pathname.match(/\.[a-z0-9]+$/i) || ['.webp'])[0];
+  const existingFile = (await fsp.readdir(originals)).find((file) => file.endsWith(` [${pageId}]${extension}`));
+  if (existingFile) name = existingFile.slice(0, -extension.length);
   const target = path.join(originals, `${name}${extension}`);
   if (!fs.existsSync(target)) {
     job.status = 'downloading';
