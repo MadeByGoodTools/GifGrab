@@ -35,6 +35,11 @@ jobs:
           $unpacked = Join-Path $env:RUNNER_TEMP 'gifgrab-old'
           Invoke-WebRequest 'https://github.com/MadeByGoodTools/GifGrab/releases/download/v0.3.1/GifGrab-Windows-0.3.1.exe' -OutFile $oldInstaller
           7z x -y $oldInstaller "-o$unpacked"
+          $payload = Get-ChildItem $unpacked -Recurse -Filter '*.7z' | Select-Object -First 1
+          if ($payload) {
+            $payloadDir = Join-Path $unpacked 'app'
+            7z x -y $payload.FullName "-o$payloadDir"
+          }
           $ffmpeg = Get-ChildItem $unpacked -Recurse -Filter ffmpeg.exe | Select-Object -First 1
           if (-not $ffmpeg) { throw 'The pinned GifGrab release did not contain ffmpeg.exe.' }
           $converterDir = Join-Path $PWD 'electron/resources/ffmpeg/win-x64'
