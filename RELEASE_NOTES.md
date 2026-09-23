@@ -1,4 +1,8 @@
-# GifGrab 0.3.6
+# GifGrab 0.3.7
+
+Each collection now gets its own timestamped folder, with `Originals` and `GIFs` inside it. The app shows separate selected, queued, saved, converted, failed, and duplicate counts for each scan, so completed items no longer vanish from the visible totals. It also ignores duplicate page previews sent by older Firefox collectors alongside GIF cards. A new scan no longer silently skips items that appeared in an earlier scan during the same app session. GIF conversions run one at a time to reduce memory pressure on large batches. The browser collectors are unchanged.
+
+## GifGrab 0.3.6
 
 The desktop app now recreates missing `Originals` and `GIFs` subfolders before saving. If the selected save location is unavailable, queued downloads pause with a clear message instead of failing in bulk. You can choose another folder while the queue is paused. This update does not change the browser collectors.
 

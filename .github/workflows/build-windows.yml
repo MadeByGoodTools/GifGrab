@@ -57,12 +57,15 @@ jobs:
             throw 'Animated WEBP conversion smoke test failed.'
           }
 
+      - name: Test collector and large batches
+        run: node --test tests/app-retry.test.js tests/collector.test.js
+
       - name: Build Good Tools installer
         working-directory: electron
         run: pnpm run dist:win
 
       - uses: actions/upload-artifact@v4
         with:
-          name: GoodTools-GifGrab-Windows-0.3.6
-          path: electron/dist/GoodTools-Installer-GifGrab-0.3.6-Windows-x64.exe
+          name: GoodTools-GifGrab-Windows-0.3.7
+          path: electron/dist/GoodTools-Installer-GifGrab-0.3.7-Windows-x64.exe
           if-no-files-found: error

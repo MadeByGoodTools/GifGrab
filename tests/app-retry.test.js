@@ -14,15 +14,18 @@ function appWithFetch(fetch) {
       if (name === 'dns') return { promises: { lookup: async () => [{ address: '1.1.1.1' }] } };
       return require(name);
     },
-    process,
+    process: { ...process, platform: process.platform, arch: process.arch, env: process.env,
+      resourcesPath: path.join(__dirname, '..', 'electron', 'resources') },
     fetch,
     AbortSignal,
     Response,
     URL,
-    setTimeout: (callback) => callback()
+    setTimeout: (callback, milliseconds) => milliseconds >= 1000 ? callback() : setTimeout(callback, Math.min(milliseconds || 0, 1))
   };
-  vm.runInNewContext(`${source}\nglobalThis.testApi = { fetchPublic, friendlyError, processJob,
-    setStorage: (folder) => { root = folder; originals = path.join(folder, 'Originals'); converted = path.join(folder, 'GIFs'); }
+  vm.runInNewContext(`${source}\nglobalThis.testApi = { fetchPublic, friendlyError, processJob, enqueueItems, scanSummaries, convert,
+    getJobs: () => jobs,
+    setRun: (replacement) => { run = replacement; },
+    setStorage: (folder) => { root = folder; }
   };`, context);
   return context.testApi;
 }
@@ -58,6 +61,83 @@ test('recreates missing save subfolders before downloading', async () => {
     assert.equal(job.status, 'downloaded');
     assert.deepEqual(fs.readFileSync(job.path), Buffer.from([1, 2, 3]));
     assert.ok(fs.statSync(path.join(folder, 'GIFs')).isDirectory());
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('large scans get independent timestamped folders and accurate counts', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'gifgrab-scans-'));
+  try {
+    const api = appWithFetch(async () => new Response(new Uint8Array([1, 2, 3]), { status: 200 }));
+    api.setStorage(folder);
+    const items = Array.from({ length: 600 }, (_, index) => ({ url: `https://example.com/${index}.webp`, title: `Image ${index}` }));
+    items.push(items[0]);
+    const first = await api.enqueueItems({ items, convert: false });
+    const second = await api.enqueueItems({ items: [items[0]], convert: false });
+    assert.equal(first.added, 600);
+    assert.equal(second.added, 1);
+    assert.notEqual(first.scanFolder, second.scanFolder);
+    assert.match(path.basename(first.scanFolder), /^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{3}-[a-f0-9]{4}$/);
+    assert.ok(fs.statSync(path.join(first.scanFolder, 'Originals')).isDirectory());
+    assert.ok(fs.statSync(path.join(second.scanFolder, 'GIFs')).isDirectory());
+    assert.deepEqual(Array.from(api.scanSummaries(), ({ total }) => total), [1, 600]);
+    for (const job of api.getJobs().slice(0, 600)) await api.processJob(job);
+    await api.processJob(api.getJobs()[600]);
+    assert.equal(fs.readdirSync(path.join(first.scanFolder, 'Originals')).length, 600);
+    assert.equal(api.getJobs().slice(0, 600).filter(({ status }) => status === 'downloaded').length, 600);
+    assert.equal(api.getJobs()[600].status, 'downloaded');
+    assert.notEqual(api.getJobs()[0].path, api.getJobs()[600].path);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('older Firefox collector previews do not double-count GIF cards', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'gifgrab-previews-'));
+  try {
+    const api = appWithFetch(async () => {});
+    api.setStorage(folder);
+    const cards = Array.from({ length: 300 }, (_, index) => ({ url: `https://www.sex.com/en/gifs/${index + 1}`, title: `GIF ${index}` }));
+    const previews = cards.map((_, index) => ({ url: `https://cdn.example.com/preview-${index}.webp`, title: `Preview ${index}` }));
+    const first = await api.enqueueItems({ items: [...cards, ...previews], convert: true });
+    assert.equal(first.added, 300);
+    assert.equal(first.previewsIgnored, 300);
+    assert.equal(api.getJobs().length, 300);
+    const summary = api.scanSummaries()[0];
+    assert.equal(summary.selected, 600);
+    assert.equal(summary.total, 300);
+    assert.equal(summary.previewsIgnored, 300);
+    const second = await api.enqueueItems({ items: cards, convert: true });
+    assert.equal(second.added, 300);
+    assert.notEqual(first.scanFolder, second.scanFolder);
+  } finally {
+    fs.rmSync(folder, { recursive: true, force: true });
+  }
+});
+
+test('large-batch GIF conversions use one converter at a time and separate scan folders', async () => {
+  const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'gifgrab-convert-'));
+  try {
+    const api = appWithFetch(async () => {});
+    api.setStorage(folder);
+    let active = 0;
+    let maximum = 0;
+    api.setRun(async (_command, args) => {
+      active++;
+      maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      fs.writeFileSync(args.at(-1), 'converted');
+      active--;
+    });
+    const jobs = ['first', 'second', 'third'].map((name) => ({ scanFolder: path.join(folder, name) }));
+    for (const job of jobs) {
+      fs.mkdirSync(path.join(job.scanFolder, 'GIFs'), { recursive: true });
+    }
+    await Promise.all(jobs.map((job, index) => api.convert(job, path.join(folder, `${index}.webp`), `image-${index}`)));
+    assert.equal(maximum, 1);
+    assert.equal(jobs.filter(({ status }) => status === 'complete').length, 3);
+    for (const job of jobs) assert.ok(fs.statSync(job.gifPath).size > 0);
   } finally {
     fs.rmSync(folder, { recursive: true, force: true });
   }

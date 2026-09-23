@@ -14,11 +14,13 @@ const PORT = Number(process.env.GIFGRAB_PORT || 17878);
 const ACTIVE_STATUSES = new Set(['claimed', 'resolving', 'downloading', 'converting']);
 const USER_AGENT = 'Mozilla/5.0 AppleWebKit/537.36 Chrome/128 Safari/537.36';
 let jobs = [];
+let sourceOwners = new Map();
+let scanMeta = new Map();
 let convertDefault = true;
 let running = true;
+let conversionBusy = false;
+let changingFolder = false;
 let root;
-let originals;
-let converted;
 let settingsFile;
 let diagnosticsFile;
 let storageError = '';
@@ -84,20 +86,24 @@ async function setFolder(folder) {
   if (jobs.some(({ status }) => ACTIVE_STATUSES.has(status))) {
     throw Error('Wait for active downloads to finish before changing folders.');
   }
-  const nextRoot = path.resolve(folder);
-  const nextOriginals = path.join(nextRoot, 'Originals');
-  const nextConverted = path.join(nextRoot, 'GIFs');
-  await Promise.all([fsp.mkdir(nextOriginals, { recursive: true }), fsp.mkdir(nextConverted, { recursive: true })]);
-  const probe = path.join(nextRoot, `.gifgrab-write-test-${crypto.randomUUID()}`);
-  try { await fsp.writeFile(probe, ''); } finally { await fsp.rm(probe, { force: true }); }
-  const temporarySettings = `${settingsFile}.tmp`;
-  await fsp.writeFile(temporarySettings, JSON.stringify({ folder: nextRoot }, null, 2));
-  await fsp.rename(temporarySettings, settingsFile);
-  root = nextRoot;
-  originals = nextOriginals;
-  converted = nextConverted;
-  diagnosticsFile = path.join(root, 'diagnostics.log');
-  storageError = '';
+  changingFolder = true;
+  try {
+    const nextRoot = path.resolve(folder);
+    await fsp.mkdir(nextRoot, { recursive: true });
+    const probe = path.join(nextRoot, `.gifgrab-write-test-${crypto.randomUUID()}`);
+    try { await fsp.writeFile(probe, ''); } finally { await fsp.rm(probe, { force: true }); }
+    const temporarySettings = `${settingsFile}.tmp`;
+    await fsp.writeFile(temporarySettings, JSON.stringify({ folder: nextRoot }, null, 2));
+    await fsp.rename(temporarySettings, settingsFile);
+    root = nextRoot;
+    for (const job of jobs) {
+      if (['queued', 'failed'].includes(job.status) && job.scanName) job.scanFolder = path.join(root, job.scanName);
+    }
+    diagnosticsFile = path.join(root, 'diagnostics.log');
+    storageError = '';
+  } finally {
+    changingFolder = false;
+  }
 }
 
 function storageMessage(error) {
@@ -105,9 +111,20 @@ function storageMessage(error) {
   return `Save folder unavailable (${code}). Check the location above or choose another folder. Downloads are paused.`;
 }
 
-async function ensureStorageFolders() {
+function foldersFor(job) {
+  const folder = job?.scanFolder || root;
+  return { originals: path.join(folder, 'Originals'), converted: path.join(folder, 'GIFs') };
+}
+
+async function ensureStorageFolders(job) {
+  const { originals, converted } = foldersFor(job);
   await Promise.all([fsp.mkdir(originals, { recursive: true }), fsp.mkdir(converted, { recursive: true })]);
   storageError = '';
+}
+
+function timestampFolder(date = new Date()) {
+  const pad = (number, length = 2) => String(number).padStart(length, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}_${pad(date.getHours())}-${pad(date.getMinutes())}-${pad(date.getSeconds())}-${pad(date.getMilliseconds(), 3)}-${crypto.randomBytes(2).toString('hex')}`;
 }
 
 async function appendDiagnostic(job, error) {
@@ -228,6 +245,7 @@ function run(command, args) {
 }
 
 async function convert(job, source, name) {
+  const { converted } = foldersFor(job);
   const output = path.join(converted, `${name}.gif`);
   if (fs.existsSync(output) && (await fsp.stat(output)).size > 0) {
     job.status = 'complete';
@@ -236,26 +254,31 @@ async function convert(job, source, name) {
   }
   job.status = 'converting';
   job.stage = 'converting';
-  const palette = path.join(root, `.${idFor(source)}.png`);
-  const temporaryOutput = path.join(converted, `.${idFor(source)}.part.gif`);
-  const scale = "fps=15,scale='min(1280,iw)':-1:flags=lanczos";
+  while (conversionBusy) await delay(250);
+  conversionBusy = true;
   try {
+    const palette = path.join(job.scanFolder || root, `.${idFor(source)}.png`);
+    const temporaryOutput = path.join(converted, `.${idFor(source)}.part.gif`);
+    const scale = "fps=15,scale='min(1280,iw)':-1:flags=lanczos";
     try {
-      await run(ffmpegPath(), ['-y', '-i', source, '-vf', `${scale},palettegen=stats_mode=diff`, palette]);
-      await run(ffmpegPath(), ['-y', '-i', source, '-i', palette, '-lavfi', `${scale}[x];[x][1:v]paletteuse=dither=sierra2_4a`, temporaryOutput]);
-    } catch (primaryError) {
-      await fsp.rm(temporaryOutput, { force: true });
       try {
-        await run(ffmpegPath(), ['-y', '-i', source, '-vf', scale, temporaryOutput]);
-      } catch (fallbackError) {
-        fallbackError.cause = fallbackError.cause || primaryError;
-        throw fallbackError;
+        await run(ffmpegPath(), ['-y', '-i', source, '-vf', `${scale},palettegen=stats_mode=diff`, palette]);
+        await run(ffmpegPath(), ['-y', '-i', source, '-i', palette, '-lavfi', `${scale}[x];[x][1:v]paletteuse=dither=sierra2_4a`, temporaryOutput]);
+      } catch (primaryError) {
+        await fsp.rm(temporaryOutput, { force: true });
+        try {
+          await run(ffmpegPath(), ['-y', '-i', source, '-vf', scale, temporaryOutput]);
+        } catch (fallbackError) {
+          fallbackError.cause = fallbackError.cause || primaryError;
+          throw fallbackError;
+        }
       }
+      await fsp.rename(temporaryOutput, output);
+    } finally {
+      await Promise.allSettled([fsp.rm(palette, { force: true }), fsp.rm(temporaryOutput, { force: true })]);
     }
-    await fsp.rename(temporaryOutput, output);
   } finally {
-    await fsp.rm(palette, { force: true });
-    await fsp.rm(temporaryOutput, { force: true });
+    conversionBusy = false;
   }
   job.status = 'complete';
   job.gifPath = output;
@@ -267,22 +290,23 @@ async function processJob(job) {
   job.error = '';
   const resolved = await resolveDetail(job.pageUrl);
   const key = resolved.source.split('?')[0];
-  const duplicate = jobs.find((candidate) => candidate !== job &&
-    (candidate.sourceUrl || '').split('?')[0] === key && candidate.status !== 'failed');
-  if (duplicate) {
+  const scanSources = sourceOwners.get(job.scanId) || new Map();
+  sourceOwners.set(job.scanId, scanSources);
+  const duplicate = scanSources.get(key);
+  if (duplicate && duplicate !== job && duplicate.status !== 'failed') {
     job.status = 'duplicate';
     job.error = `Same source as ${duplicate.title || duplicate.pageUrl}`;
     job.duplicateOf = duplicate.id;
     return;
   }
+  scanSources.set(key, job);
   job.sourceUrl = resolved.source;
   const pageId = (job.pageUrl.match(/\/gifs\/(\d+)/) || [])[1] || idFor(resolved.source);
   let name = `${safeName(job.title || resolved.title, `gif-${pageId}`)} [${pageId}]`;
   const extension = (new URL(resolved.source).pathname.match(/\.[a-z0-9]+$/i) || ['.webp'])[0];
   job.stage = 'storage';
-  await ensureStorageFolders();
-  const existingFile = (await fsp.readdir(originals)).find((file) => file.endsWith(` [${pageId}]${extension}`));
-  if (existingFile) name = existingFile.slice(0, -extension.length);
+  await ensureStorageFolders(job);
+  const { originals } = foldersFor(job);
   const target = path.join(originals, `${name}${extension}`);
   if (!fs.existsSync(target)) {
     job.status = 'downloading';
@@ -315,15 +339,17 @@ async function processJob(job) {
 
 async function worker() {
   while (running) {
+    if (changingFolder) { await delay(250); continue; }
     const job = jobs.find(({ status }) => status === 'queued');
     if (!job) { await delay(400); continue; }
     try {
-      await ensureStorageFolders();
+      await ensureStorageFolders(job);
     } catch (error) {
       storageError = storageMessage(error);
       await delay(3000);
       continue;
     }
+    if (changingFolder) continue;
     job.status = 'claimed';
     job.stage = 'claimed';
     try {
@@ -358,6 +384,61 @@ async function body(request) {
   return content ? JSON.parse(content) : {};
 }
 
+async function enqueueItems(data) {
+  const scanId = crypto.randomUUID();
+  const scanName = timestampFolder();
+  const scanFolder = path.join(root, scanName);
+  const known = new Set();
+  const safeOrigins = new Map();
+  const items = Array.isArray(data.items) ? data.items : [];
+  const sexGifCard = (url) => /^https:\/\/(?:www\.)?sex\.com\/(?:en\/)?gifs\/\d+(?:[/?#]|$)/i.test(url || '');
+  const hasSexGifCards = items.some((item) => sexGifCard(item?.url));
+  let previewsIgnored = 0;
+  let added = 0;
+  for (const item of items) {
+    if (hasSexGifCards && !sexGifCard(item?.url)) { previewsIgnored++; continue; }
+    const url = canonical(item?.url);
+    if (known.has(url)) continue;
+    let origin;
+    try {
+      const parsed = new URL(url);
+      if (!['http:', 'https:'].includes(parsed.protocol)) continue;
+      origin = parsed.origin;
+    } catch { continue; }
+    if (!safeOrigins.has(origin)) safeOrigins.set(origin, await safeRemote(origin));
+    if (!safeOrigins.get(origin)) continue;
+    known.add(url);
+    jobs.push({ id: idFor(`${scanId}:${url}`), scanId, scanName, scanFolder, pageUrl: url,
+      title: typeof item.title === 'string' ? item.title.trim() : '', status: 'queued', progress: 0,
+      convert: data.convert ?? convertDefault, addedAt: Date.now() });
+    added++;
+  }
+  if (added) {
+    scanMeta.set(scanId, { selected: items.length, previewsIgnored });
+    try { await ensureStorageFolders({ scanFolder }); } catch (error) { storageError = storageMessage(error); }
+  }
+  return { added, scanName, scanFolder, previewsIgnored };
+}
+
+function scanSummaries() {
+  const scans = new Map();
+  for (const job of jobs) {
+    const id = job.scanId || 'previous';
+    if (!scans.has(id)) scans.set(id, { id, name: job.scanName || 'Current session', folder: job.scanFolder || root,
+      selected: scanMeta.get(id)?.selected || 0, previewsIgnored: scanMeta.get(id)?.previewsIgnored || 0,
+      total: 0, queued: 0, active: 0, originals: 0, gifs: 0, failed: 0, duplicates: 0 });
+    const scan = scans.get(id);
+    scan.total++;
+    if (job.status === 'queued') scan.queued++;
+    if (ACTIVE_STATUSES.has(job.status)) scan.active++;
+    if (job.path) scan.originals++;
+    if (job.gifPath) scan.gifs++;
+    if (job.status === 'failed') scan.failed++;
+    if (job.status === 'duplicate') scan.duplicates++;
+  }
+  return [...scans.values()].reverse();
+}
+
 function startServer() {
   return http.createServer(async (request, response) => {
     try {
@@ -366,22 +447,17 @@ function startServer() {
       response.setHeader('access-control-allow-origin', origin || '*');
       if (request.method === 'OPTIONS') return json(response, {}, 204);
       if (request.method === 'GET' && request.url === '/health') return json(response, { ok: true });
-      if (request.method === 'GET' && request.url === '/api/status') return json(response, { ok: true,
-        jobs: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)), convert: convertDefault, folder: root, storageError });
+      if (request.method === 'GET' && request.url === '/api/status') {
+        const pending = jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status));
+        return json(response, { ok: true, jobs: pending.slice(0, 100), hiddenJobs: Math.max(0, pending.length - 100),
+          scans: scanSummaries(), convert: convertDefault, folder: root, storageError });
+      }
       if (request.method === 'POST' && request.url === '/api/enqueue') {
         if (request.headers['x-gifgrab'] !== '1') return json(response, { error: 'collector header required' }, 403);
         const data = await body(request);
-        let added = 0;
-        const known = new Set(jobs.map((job) => canonical(job.pageUrl)));
-        for (const item of data.items || []) {
-          const url = canonical(item.url);
-          if (known.has(url) || !(await safeRemote(url))) continue;
-          jobs.push({ id: idFor(url), pageUrl: url, title: (item.title || '').trim(), status: 'queued', progress: 0,
-            convert: data.convert ?? convertDefault, addedAt: Date.now() });
-          known.add(url);
-          added++;
-        }
-        return json(response, { ok: true, added, total: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)).length });
+        const { added, scanName, scanFolder, previewsIgnored } = await enqueueItems(data);
+        return json(response, { ok: true, added, scanName, scanFolder, previewsIgnored,
+          total: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)).length });
       }
       if (request.method === 'POST' && request.url === '/api/settings') {
         convertDefault = !!(await body(request)).convert;
@@ -415,10 +491,19 @@ function startServer() {
       if (request.method === 'POST' && request.url === '/api/clear') {
         if (jobs.some(({ status }) => ACTIVE_STATUSES.has(status))) return json(response, { error: 'Wait for active downloads to finish before clearing the list.' }, 409);
         jobs = [];
+        sourceOwners = new Map();
+        scanMeta = new Map();
         return json(response, { ok: true });
       }
       if (request.method === 'POST' && request.url === '/api/open') {
         await shell.openPath(root);
+        return json(response, { ok: true });
+      }
+      if (request.method === 'POST' && request.url === '/api/open-scan') {
+        const { id } = await body(request);
+        const job = jobs.find((candidate) => candidate.scanId === id);
+        if (!job) return json(response, { error: 'Scan not found' }, 404);
+        await shell.openPath(job.scanFolder);
         return json(response, { ok: true });
       }
       if (request.method === 'POST' && request.url === '/api/diagnostics') {
@@ -444,10 +529,8 @@ app.whenReady().then(async () => {
   const defaultRoot = process.env.GIFGRAB_DATA_DIR || path.join(app.getPath('videos'), 'GifGrab');
   settingsFile = path.join(app.getPath('userData'), 'settings.json');
   root = process.env.GIFGRAB_DATA_DIR || await loadSettings(defaultRoot);
-  originals = path.join(root, 'Originals');
-  converted = path.join(root, 'GIFs');
   diagnosticsFile = path.join(root, 'diagnostics.log');
-  try { await ensureStorageFolders(); } catch (error) { storageError = storageMessage(error); }
+  try { await fsp.mkdir(root, { recursive: true }); } catch (error) { storageError = storageMessage(error); }
   // Old queue history is no longer used; keep downloaded media untouched.
   try { await fsp.rm(path.join(defaultRoot, 'queue.json'), { force: true }); } catch {}
   startServer();
