@@ -1,4 +1,8 @@
-# GifGrab 0.3.5 + Collector 0.3.3
+# GifGrab 0.3.6
+
+The desktop app now recreates missing `Originals` and `GIFs` subfolders before saving. If the selected save location is unavailable, queued downloads pause with a clear message instead of failing in bulk. You can choose another folder while the queue is paused. This update does not change the browser collectors.
+
+## GifGrab 0.3.5 + Collector 0.3.3
 
 The collector now counts GIF cards on sex.com once instead of also adding their preview images and page icons. **Load More + Collect** keeps discoveries from earlier scroll positions even when the site replaces its visible cards. The popup shows the real number found and displays collection errors.
 

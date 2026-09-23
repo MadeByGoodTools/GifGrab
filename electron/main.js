@@ -21,6 +21,7 @@ let originals;
 let converted;
 let settingsFile;
 let diagnosticsFile;
+let storageError = '';
 
 const escDecode = (value) => (value || '').replace(/\\u0026/g, '&').replace(/\\\//g, '/').replace(/&amp;/g, '&');
 const idFor = (value) => crypto.createHash('sha1').update(value).digest('hex').slice(0, 12);
@@ -80,8 +81,8 @@ async function loadSettings(defaultRoot) {
 
 async function setFolder(folder) {
   if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw Error('Enter a full folder path.');
-  if (jobs.some(({ status }) => status === 'queued' || ACTIVE_STATUSES.has(status))) {
-    throw Error('Wait for queued downloads to finish before changing folders.');
+  if (jobs.some(({ status }) => ACTIVE_STATUSES.has(status))) {
+    throw Error('Wait for active downloads to finish before changing folders.');
   }
   const nextRoot = path.resolve(folder);
   const nextOriginals = path.join(nextRoot, 'Originals');
@@ -96,6 +97,17 @@ async function setFolder(folder) {
   originals = nextOriginals;
   converted = nextConverted;
   diagnosticsFile = path.join(root, 'diagnostics.log');
+  storageError = '';
+}
+
+function storageMessage(error) {
+  const code = error?.code || 'unknown error';
+  return `Save folder unavailable (${code}). Check the location above or choose another folder. Downloads are paused.`;
+}
+
+async function ensureStorageFolders() {
+  await Promise.all([fsp.mkdir(originals, { recursive: true }), fsp.mkdir(converted, { recursive: true })]);
+  storageError = '';
 }
 
 async function appendDiagnostic(job, error) {
@@ -267,6 +279,8 @@ async function processJob(job) {
   const pageId = (job.pageUrl.match(/\/gifs\/(\d+)/) || [])[1] || idFor(resolved.source);
   let name = `${safeName(job.title || resolved.title, `gif-${pageId}`)} [${pageId}]`;
   const extension = (new URL(resolved.source).pathname.match(/\.[a-z0-9]+$/i) || ['.webp'])[0];
+  job.stage = 'storage';
+  await ensureStorageFolders();
   const existingFile = (await fsp.readdir(originals)).find((file) => file.endsWith(` [${pageId}]${extension}`));
   if (existingFile) name = existingFile.slice(0, -extension.length);
   const target = path.join(originals, `${name}${extension}`);
@@ -303,11 +317,24 @@ async function worker() {
   while (running) {
     const job = jobs.find(({ status }) => status === 'queued');
     if (!job) { await delay(400); continue; }
+    try {
+      await ensureStorageFolders();
+    } catch (error) {
+      storageError = storageMessage(error);
+      await delay(3000);
+      continue;
+    }
     job.status = 'claimed';
     job.stage = 'claimed';
     try {
       await processJob(job);
     } catch (error) {
+      if (job.stage === 'storage' && ['ENOENT', 'EACCES', 'EPERM'].includes(error?.code)) {
+        job.status = 'queued';
+        storageError = storageMessage(error);
+        await delay(3000);
+        continue;
+      }
       job.status = 'failed';
       job.error = friendlyError(error, job.stage);
       job.progress = 0;
@@ -340,7 +367,7 @@ function startServer() {
       if (request.method === 'OPTIONS') return json(response, {}, 204);
       if (request.method === 'GET' && request.url === '/health') return json(response, { ok: true });
       if (request.method === 'GET' && request.url === '/api/status') return json(response, { ok: true,
-        jobs: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)), convert: convertDefault, folder: root });
+        jobs: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)), convert: convertDefault, folder: root, storageError });
       if (request.method === 'POST' && request.url === '/api/enqueue') {
         if (request.headers['x-gifgrab'] !== '1') return json(response, { error: 'collector header required' }, 403);
         const data = await body(request);
@@ -371,8 +398,8 @@ function startServer() {
         return json(response, { ok: true, folder: root });
       }
       if (request.method === 'POST' && request.url === '/api/folder/pick') {
-        if (jobs.some(({ status }) => status === 'queued' || ACTIVE_STATUSES.has(status))) {
-          return json(response, { error: 'Wait for queued downloads to finish before changing folders.' }, 409);
+        if (jobs.some(({ status }) => ACTIVE_STATUSES.has(status))) {
+          return json(response, { error: 'Wait for active downloads to finish before changing folders.' }, 409);
         }
         const options = { title: 'Choose GifGrab download folder', defaultPath: root, properties: ['openDirectory', 'createDirectory'] };
         const focusedWindow = BrowserWindow.getFocusedWindow();
@@ -420,7 +447,7 @@ app.whenReady().then(async () => {
   originals = path.join(root, 'Originals');
   converted = path.join(root, 'GIFs');
   diagnosticsFile = path.join(root, 'diagnostics.log');
-  await Promise.all([fsp.mkdir(originals, { recursive: true }), fsp.mkdir(converted, { recursive: true })]);
+  try { await ensureStorageFolders(); } catch (error) { storageError = storageMessage(error); }
   // Old queue history is no longer used; keep downloaded media untouched.
   try { await fsp.rm(path.join(defaultRoot, 'queue.json'), { force: true }); } catch {}
   startServer();
