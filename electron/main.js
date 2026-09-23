@@ -111,6 +111,7 @@ function friendlyError(error, stage) {
   const prefix = stage === 'converting' ? 'GIF conversion failed' :
     stage === 'saving' ? 'Saving the download failed' :
     stage === 'downloading' ? 'Media download failed' : 'Download failed';
+  if (/\b429\b/.test(message)) return 'The site is limiting requests (429). Wait a few minutes, then retry failed items.';
   if (/ffmpeg|enoent/i.test(`${message} ${code}`)) {
     return 'GIF conversion failed: the bundled converter could not start. Reinstall GifGrab with the Good Tools installer.';
   }
@@ -141,17 +142,22 @@ async function fetchPublic(url, options = {}, timeoutMs = 45000) {
     if (!(await safeRemote(current))) throw Error('Blocked a non-public address');
     let response;
     let lastError;
-    for (let attempt = 0; attempt < 3; attempt++) {
+    for (let attempt = 0; attempt < 5; attempt++) {
       try {
         response = await fetchOnce(current, options, timeoutMs);
         if (![408, 425, 429].includes(response.status) && response.status < 500) break;
-        if (attempt < 2) {
+        if (attempt < 4) {
+          const retryAfter = response.headers.get('retry-after');
+          const seconds = Number(retryAfter);
+          const headerDelay = Number.isFinite(seconds) ? seconds * 1000 :
+            retryAfter ? Date.parse(retryAfter) - Date.now() : 0;
+          const wait = Math.min(30000, Math.max(1500 * 2 ** attempt, headerDelay || 0));
           try { await response.body?.cancel(); } catch {}
-          await delay(500 * (attempt + 1));
+          await delay(wait);
         }
       } catch (error) {
         lastError = error;
-        if (attempt < 2) await delay(500 * (attempt + 1));
+        if (attempt < 4) await delay(1500 * 2 ** attempt);
       }
     }
     if (!response) throw lastError || Error('Request failed');

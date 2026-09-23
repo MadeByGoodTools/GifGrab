@@ -1,7 +1,88 @@
-const msg=document.querySelector('#msg'), collect=document.querySelector('#collect'), auto=document.querySelector('#auto'), convert=document.querySelector('#convert');
-async function health(){try{let r=await fetch('http://127.0.0.1:17878/health');if(!r.ok)throw 0;msg.textContent='Desktop app connected';msg.className='ok'}catch(e){msg.textContent='Open the GifGrab desktop app first';msg.className='bad';collect.disabled=true;auto.disabled=true}}
-async function scan(loadMore){msg.textContent=loadMore?'Loading more items…':'Scanning page…';msg.className='';let [tab]=await chrome.tabs.query({active:true,currentWindow:true});if(!/^https?:\/\//.test(tab.url)){msg.textContent='Open a web page with animations first';msg.className='bad';return}
-  let [{result}]=await chrome.scripting.executeScript({target:{tabId:tab.id},func:async(load)=>{if(load){let unchanged=0,last=0;for(let i=0;i<120&&unchanged<5;i++){let before=document.querySelectorAll('a[href*="/gifs/"]').length;let b=[...document.querySelectorAll('button')].find(x=>/show more/i.test(x.textContent));if(b)b.click();window.scrollTo(0,document.body.scrollHeight);await new Promise(r=>setTimeout(r,900));let now=document.querySelectorAll('a[href*="/gifs/"]').length;unchanged=now===last?unchanged+1:0;last=now;if(!b&&now===before)unchanged++}}
-    let out=new Map();let siteSpecific=/^(www\.)?sex\.com$/.test(location.hostname);for(let a of document.querySelectorAll('a[href]')){let img=a.querySelector('img');if(siteSpecific&&!/\/gifs\/\d+/.test(a.pathname))continue;if(!siteSpecific&&!img&&!/\.(gif|webp|mp4|webm)(\?|$)/i.test(a.href))continue;if(!/^https?:/.test(a.href))continue;let title=(img?.alt||a.title||a.getAttribute('aria-label')||'').trim();out.set(a.href,{url:a.href,title})}for(let media of document.querySelectorAll('video[src],video source[src],img[src]')){let url=media.currentSrc||media.src;if(!url||!/^https?:/.test(url)||(!siteSpecific&&!/\.(gif|webp|mp4|webm)(\?|$)/i.test(url)))continue;out.set(url,{url,title:(media.alt||media.title||'').trim()})}return [...out.values()]},args:[loadMore]});
-  let r=await fetch('http://127.0.0.1:17878/api/enqueue',{method:'POST',headers:{'Content-Type':'application/json','X-GifGrab':'1'},body:JSON.stringify({items:result,convert:convert.checked})});let d=await r.json();msg.textContent=`Added ${d.added} · ${d.total} total in queue`;msg.className='ok'}
-collect.onclick=()=>scan(false).catch(()=>{msg.textContent='Could not collect this page';msg.className='bad'});auto.onclick=()=>scan(true).catch(()=>{msg.textContent='Collection stopped';msg.className='bad'});health();
+const msg = document.querySelector('#msg');
+const collect = document.querySelector('#collect');
+const auto = document.querySelector('#auto');
+const convert = document.querySelector('#convert');
+
+async function health() {
+  try {
+    const response = await fetch('http://127.0.0.1:17878/health');
+    if (!response.ok) throw Error('Desktop app unavailable');
+    msg.textContent = 'Desktop app connected';
+    msg.className = 'ok';
+  } catch {
+    msg.textContent = 'Open the GifGrab desktop app first';
+    msg.className = 'bad';
+    collect.disabled = true;
+    auto.disabled = true;
+  }
+}
+
+async function scan(loadMore) {
+  msg.textContent = loadMore ? 'Loading more items…' : 'Scanning page…';
+  msg.className = '';
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!/^https?:\/\//.test(tab?.url || '')) throw Error('Open a web page with animations first');
+
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: async (load) => {
+      const found = new Map();
+      const siteSpecific = /^(www\.)?sex\.com$/.test(location.hostname);
+      const mediaExtension = /\.(gif|webp|mp4|webm|avif)(\?|$)/i;
+      function collectVisible() {
+        if (siteSpecific && /\/gifs\/\d+\/?$/.test(location.pathname)) {
+          found.set(location.href, { url: location.href, title: document.querySelector('h1')?.textContent?.trim() || '' });
+        }
+        for (const link of document.querySelectorAll('a[href]')) {
+          const image = link.querySelector('img');
+          if (siteSpecific && !/\/gifs\/\d+\/?$/.test(link.pathname)) continue;
+          if (!siteSpecific && !image && !mediaExtension.test(link.href)) continue;
+          if (!/^https?:/.test(link.href)) continue;
+          found.set(link.href, { url: link.href, title: (image?.alt || link.title || link.getAttribute('aria-label') || '').trim() });
+        }
+        if (siteSpecific) return;
+        for (const media of document.querySelectorAll('video[src],video source[src],img[src]')) {
+          const url = media.currentSrc || media.src;
+          if (!url || !/^https?:/.test(url) || !mediaExtension.test(url)) continue;
+          if (media.closest('a[href]')) continue;
+          found.set(url, { url, title: (media.alt || media.title || '').trim() });
+        }
+      }
+      collectVisible();
+      if (load) {
+        let unchanged = 0;
+        for (let index = 0; index < 120 && unchanged < 5; index++) {
+          const before = found.size;
+          const more = [...document.querySelectorAll('button')].find((button) => /show more/i.test(button.textContent));
+          if (more) more.click();
+          window.scrollTo(0, document.body.scrollHeight);
+          await new Promise((resolve) => setTimeout(resolve, 900));
+          collectVisible();
+          unchanged = found.size === before ? unchanged + 1 : 0;
+        }
+      }
+      return [...found.values()];
+    },
+    args: [loadMore]
+  });
+
+  if (!Array.isArray(result)) throw Error('The page changed while collecting. Try again.');
+  const response = await fetch('http://127.0.0.1:17878/api/enqueue', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-GifGrab': '1' },
+    body: JSON.stringify({ items: result, convert: convert.checked })
+  });
+  const data = await response.json();
+  if (!response.ok) throw Error(data.error || 'GifGrab could not add these items');
+  msg.textContent = `Found ${result.length} · added ${data.added} · ${data.total} in queue`;
+  msg.className = 'ok';
+}
+
+function report(error) {
+  msg.textContent = error?.message || 'Collection stopped';
+  msg.className = 'bad';
+}
+
+collect.onclick = () => scan(false).catch(report);
+auto.onclick = () => scan(true).catch(report);
+health();
