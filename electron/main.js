@@ -64,10 +64,6 @@ async function safeRemote(url) {
   }
 }
 
-function ageAmbiguous(text) {
-  const normalized = (text || '').toLowerCase();
-  return /\b(minor|underage|child|children|daughter|son|schoolgirl|schoolboy|barely legal|teen)\b/.test(normalized) ||
-    /(^|\D)([0-9]|1[0-7])(\s*(yo|y\/o|years? old))?(\D|$)/.test(normalized);
 }
 
 function safeName(text, fallback) {
@@ -252,16 +248,7 @@ async function processJob(job) {
     job.status = 'skipped';
     job.error = 'Skipped because the title has unclear age-related wording';
     return save();
-  }
-  const key = resolved.source.split('?')[0];
-  const duplicate = jobs.find((candidate) => candidate !== job &&
-    (candidate.sourceUrl || '').split('?')[0] === key && candidate.status !== 'failed');
-  if (duplicate) {
-    job.status = 'duplicate';
-    job.error = `Same source as ${duplicate.title || duplicate.pageUrl}`;
-    job.duplicateOf = duplicate.id;
-    return save();
-  }
+
   job.sourceUrl = resolved.source;
   await save();
   const pageId = (job.pageUrl.match(/\/gifs\/(\d+)/) || [])[1] || idFor(resolved.source);
