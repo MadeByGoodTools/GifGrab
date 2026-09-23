@@ -22,7 +22,7 @@
     "files": ["main.js", "ui/**/*", "package.json"],
     "extraResources": [{"from": "resources/ffmpeg", "to": "ffmpeg"}],
     "mac": {"category": "public.app-category.utilities", "target": ["zip"], "icon": "resources/GifGrab.icns"},
-    "win": {"target": ["nsis"], "artifactName": "GoodTools-GifGrab-Setup-${version}-${arch}.${ext}", "icon": "resources/GifGrab.ico"},
+    "win": {"target": ["nsis"], "artifactName": "GoodTools-Installer-GifGrab-${version}-Windows-${arch}.${ext}", "icon": "resources/GifGrab.ico"},
     "nsis": {
       "oneClick": false,
       "perMachine": false,

@@ -64,5 +64,5 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: GoodTools-GifGrab-Windows-0.3.2
-          path: electron/dist/GoodTools-GifGrab-Setup-0.3.2-x64.exe
+          path: electron/dist/GoodTools-Installer-GifGrab-0.3.2-Windows-x64.exe
           if-no-files-found: error
