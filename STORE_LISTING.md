@@ -15,7 +15,7 @@ Collect modern web animations and send them to the local GifGrab desktop queue.
 
 GifGrab Collector finds modern web animations that ordinary image downloaders often miss.
 
-Press Collect This Page to identify animated WebP, GIF, MP4, WebM, AVIF, and media linked behind detail pages. Use Load More + Collect on scrolling galleries. Your selections go to the GifGrab desktop app, where large collections stay organized in a resumable queue.
+Press Collect This Page to identify animated WebP, GIF, MP4, WebM, AVIF, and media linked behind detail pages. Use Load More + Collect on scrolling galleries. Your selections go to the GifGrab desktop app, where large collections can be retried during the current session. The download list starts fresh when the app is reopened.
 
 Duplicate checks compare both the page address and the resolved media source so collecting the same page again does not download the same animation twice. Optional conversion to GIF happens locally on your computer.
 
@@ -53,7 +53,6 @@ The extension handles the active page address, animation links, image descriptio
 1. Install and open the matching GifGrab desktop app.
 2. Visit https://goodtools.ca/tools/gifgrab/demo in the browser.
 3. Open the extension and press Collect This Page.
-4. Confirm that the extension reports “Added 2” and the desktop queue contains both sample animations.
-5. Press Collect This Page again and confirm that it reports “Added 0,” demonstrating duplicate protection.
+4. Confirm that the extension reports “Found 2 · added 2” and the desktop queue contains both sample animations.
+5. Press Collect This Page again and confirm that it reports “added 0,” demonstrating duplicate protection.
 6. The Load More + Collect button is intended for scrolling galleries; the safe test page is deliberately finite.
-

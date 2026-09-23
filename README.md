@@ -10,7 +10,7 @@ GifGrab is a local Mac and Windows batch downloader with Chrome and Edge collect
 
 ## Install on Windows
 
-1. Run `GoodTools-Installer-GifGrab-0.3.4-Windows-x64.exe` and follow the installation steps.
+1. Run `GoodTools-Installer-GifGrab-0.3.5-Windows-x64.exe` and follow the installation steps.
 2. Install the matching Chrome, Edge, Firefox, or Opera collector.
 3. Open an animation listing and collect it from the extension.
 

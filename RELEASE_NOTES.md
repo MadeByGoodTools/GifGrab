@@ -1,4 +1,10 @@
-# GifGrab 0.3.4
+# GifGrab 0.3.5 + Collector 0.3.3
+
+The collector now counts GIF cards on sex.com once instead of also adding their preview images and page icons. **Load More + Collect** keeps discoveries from earlier scroll positions even when the site replaces its visible cards. The popup shows the real number found and displays collection errors.
+
+The desktop app now waits longer before retrying temporary server failures such as HTTP 429. A site can still limit requests; if that happens, wait and retry the failed items later.
+
+## GifGrab 0.3.4
 
 The desktop app now opens with a fresh download list each time. It no longer saves queue or download history; existing files remain in place and duplicate checks still apply during a session and against matching files in the selected folder.
 
