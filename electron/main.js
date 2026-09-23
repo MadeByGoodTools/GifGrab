@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, net: electronNet } = require('electron');
+const { app, BrowserWindow, dialog, shell, net: electronNet } = require('electron');
 const http = require('http');
 const fs = require('fs');
 const fsp = fs.promises;
@@ -19,7 +19,7 @@ let running = true;
 let root;
 let originals;
 let converted;
-let stateFile;
+let settingsFile;
 let diagnosticsFile;
 
 const escDecode = (value) => (value || '').replace(/\\u0026/g, '&').replace(/\\\//g, '/').replace(/&amp;/g, '&');
@@ -70,24 +70,32 @@ function safeName(text, fallback) {
   return (value || fallback).slice(0, 110);
 }
 
-async function save() {
-  await fsp.writeFile(stateFile, JSON.stringify({ version: 2, jobs, convert: convertDefault }, null, 2));
+async function loadSettings(defaultRoot) {
+  try {
+    const data = JSON.parse(await fsp.readFile(settingsFile, 'utf8'));
+    if (typeof data.folder === 'string' && path.isAbsolute(data.folder)) return path.resolve(data.folder);
+  } catch {}
+  return defaultRoot;
 }
 
-async function load() {
-  try {
-    const data = JSON.parse(await fsp.readFile(stateFile, 'utf8'));
-    jobs = data.jobs || [];
-    const migrating = !(data.version >= 2);
-    convertDefault = migrating ? true : !!data.convert;
-    for (const job of jobs) {
-      if (ACTIVE_STATUSES.has(job.status)) job.status = 'queued';
-      if (migrating) {
-        job.convert = true;
-        if (job.status === 'downloaded') job.status = 'queued';
-      }
-    }
-  } catch {}
+async function setFolder(folder) {
+  if (typeof folder !== 'string' || !path.isAbsolute(folder)) throw Error('Enter a full folder path.');
+  if (jobs.some(({ status }) => status === 'queued' || ACTIVE_STATUSES.has(status))) {
+    throw Error('Wait for queued downloads to finish before changing folders.');
+  }
+  const nextRoot = path.resolve(folder);
+  const nextOriginals = path.join(nextRoot, 'Originals');
+  const nextConverted = path.join(nextRoot, 'GIFs');
+  await Promise.all([fsp.mkdir(nextOriginals, { recursive: true }), fsp.mkdir(nextConverted, { recursive: true })]);
+  const probe = path.join(nextRoot, `.gifgrab-write-test-${crypto.randomUUID()}`);
+  try { await fsp.writeFile(probe, ''); } finally { await fsp.rm(probe, { force: true }); }
+  const temporarySettings = `${settingsFile}.tmp`;
+  await fsp.writeFile(temporarySettings, JSON.stringify({ folder: nextRoot }, null, 2));
+  await fsp.rename(temporarySettings, settingsFile);
+  root = nextRoot;
+  originals = nextOriginals;
+  converted = nextConverted;
+  diagnosticsFile = path.join(root, 'diagnostics.log');
 }
 
 async function appendDiagnostic(job, error) {
@@ -210,7 +218,6 @@ async function convert(job, source, name) {
   }
   job.status = 'converting';
   job.stage = 'converting';
-  await save();
   const palette = path.join(root, `.${idFor(source)}.png`);
   const temporaryOutput = path.join(converted, `.${idFor(source)}.part.gif`);
   const scale = "fps=15,scale='min(1280,iw)':-1:flags=lanczos";
@@ -240,7 +247,6 @@ async function processJob(job) {
   job.status = 'resolving';
   job.stage = 'resolving';
   job.error = '';
-  await save();
   const resolved = await resolveDetail(job.pageUrl);
   const key = resolved.source.split('?')[0];
   const duplicate = jobs.find((candidate) => candidate !== job &&
@@ -249,10 +255,9 @@ async function processJob(job) {
     job.status = 'duplicate';
     job.error = `Same source as ${duplicate.title || duplicate.pageUrl}`;
     job.duplicateOf = duplicate.id;
-    return save();
+    return;
   }
   job.sourceUrl = resolved.source;
-  await save();
   const pageId = (job.pageUrl.match(/\/gifs\/(\d+)/) || [])[1] || idFor(resolved.source);
   const name = `${safeName(job.title || resolved.title, `gif-${pageId}`)} [${pageId}]`;
   const extension = (new URL(resolved.source).pathname.match(/\.[a-z0-9]+$/i) || ['.webp'])[0];
@@ -260,7 +265,6 @@ async function processJob(job) {
   if (!fs.existsSync(target)) {
     job.status = 'downloading';
     job.stage = 'downloading';
-    await save();
     const response = await fetchPublic(resolved.source, {
       headers: {
         'user-agent': USER_AGENT,
@@ -285,7 +289,6 @@ async function processJob(job) {
   job.progress = 1;
   if (job.convert) await convert(job, target, name);
   job.stage = '';
-  await save();
 }
 
 async function worker() {
@@ -301,7 +304,6 @@ async function worker() {
       job.error = friendlyError(error, job.stage);
       job.progress = 0;
       await appendDiagnostic(job, error);
-      await save();
     }
   }
 }
@@ -329,7 +331,8 @@ function startServer() {
       response.setHeader('access-control-allow-origin', origin || '*');
       if (request.method === 'OPTIONS') return json(response, {}, 204);
       if (request.method === 'GET' && request.url === '/health') return json(response, { ok: true });
-      if (request.method === 'GET' && request.url === '/api/status') return json(response, { ok: true, jobs, convert: convertDefault, folder: root });
+      if (request.method === 'GET' && request.url === '/api/status') return json(response, { ok: true,
+        jobs: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)), convert: convertDefault, folder: root });
       if (request.method === 'POST' && request.url === '/api/enqueue') {
         if (request.headers['x-gifgrab'] !== '1') return json(response, { error: 'collector header required' }, 403);
         const data = await body(request);
@@ -343,8 +346,7 @@ function startServer() {
           known.add(url);
           added++;
         }
-        await save();
-        return json(response, { ok: true, added, total: jobs.length });
+        return json(response, { ok: true, added, total: jobs.filter(({ status }) => !['complete', 'downloaded', 'duplicate'].includes(status)).length });
       }
       if (request.method === 'POST' && request.url === '/api/settings') {
         convertDefault = !!(await body(request)).convert;
@@ -354,18 +356,30 @@ function startServer() {
             if (job.status === 'downloaded') job.status = 'queued';
           }
         }
-        await save();
         return json(response, { ok: true });
+      }
+      if (request.method === 'POST' && request.url === '/api/folder') {
+        await setFolder((await body(request)).folder);
+        return json(response, { ok: true, folder: root });
+      }
+      if (request.method === 'POST' && request.url === '/api/folder/pick') {
+        if (jobs.some(({ status }) => status === 'queued' || ACTIVE_STATUSES.has(status))) {
+          return json(response, { error: 'Wait for queued downloads to finish before changing folders.' }, 409);
+        }
+        const options = { title: 'Choose GifGrab download folder', defaultPath: root, properties: ['openDirectory', 'createDirectory'] };
+        const focusedWindow = BrowserWindow.getFocusedWindow();
+        const result = focusedWindow ? await dialog.showOpenDialog(focusedWindow, options) : await dialog.showOpenDialog(options);
+        if (result.canceled || !result.filePaths[0]) return json(response, { ok: true, canceled: true, folder: root });
+        await setFolder(result.filePaths[0]);
+        return json(response, { ok: true, folder: root });
       }
       if (request.method === 'POST' && request.url === '/api/retry') {
         for (const job of jobs) if (job.status === 'failed') { job.status = 'queued'; job.error = ''; job.stage = ''; }
-        await save();
         return json(response, { ok: true });
       }
       if (request.method === 'POST' && request.url === '/api/clear') {
         if (jobs.some(({ status }) => ACTIVE_STATUSES.has(status))) return json(response, { error: 'Wait for active downloads to finish before clearing the list.' }, 409);
         jobs = [];
-        await save();
         return json(response, { ok: true });
       }
       if (request.method === 'POST' && request.url === '/api/open') {
@@ -392,13 +406,15 @@ function createWindow() {
 
 app.whenReady().then(async () => {
   if (!app.requestSingleInstanceLock()) return app.quit();
-  root = process.env.GIFGRAB_DATA_DIR || path.join(app.getPath('videos'), 'GifGrab');
+  const defaultRoot = process.env.GIFGRAB_DATA_DIR || path.join(app.getPath('videos'), 'GifGrab');
+  settingsFile = path.join(app.getPath('userData'), 'settings.json');
+  root = process.env.GIFGRAB_DATA_DIR || await loadSettings(defaultRoot);
   originals = path.join(root, 'Originals');
   converted = path.join(root, 'GIFs');
-  stateFile = path.join(root, 'queue.json');
   diagnosticsFile = path.join(root, 'diagnostics.log');
   await Promise.all([fsp.mkdir(originals, { recursive: true }), fsp.mkdir(converted, { recursive: true })]);
-  await load();
+  // Old queue history is no longer used; keep downloaded media untouched.
+  try { await fsp.rm(path.join(defaultRoot, 'queue.json'), { force: true }); } catch {}
   startServer();
   for (let index = 0; index < 3; index++) worker();
   createWindow();

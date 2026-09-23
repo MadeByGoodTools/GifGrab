@@ -1,1 +1,44 @@
-<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>GifGrab</title><style>:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101014;color:#f5f5f7;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}.top{position:sticky;top:0;background:#18181d;border-bottom:1px solid #303038;padding:18px 22px;z-index:2}.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}h1{font-size:21px;margin:0 auto 0 0}.dot{width:9px;height:9px;border-radius:50%;background:#46d369}button{border:0;border-radius:9px;padding:8px 13px;background:#3c82f6;color:white;font-weight:600;cursor:pointer}button.secondary{background:#2d2d35}button.clear{background:#2d2d35;color:#ff9a9a}.stats{padding:14px 22px;color:#aaa}.empty{margin:70px auto;text-align:center;color:#999;max-width:420px}.empty b{display:block;color:#eee;font-size:18px;margin-bottom:8px}.job{display:grid;grid-template-columns:1fr 115px;gap:12px;padding:13px 22px;border-top:1px solid #24242a}.title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.url{font-size:11px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}.status{text-align:right;text-transform:capitalize;color:#aaa}.failed{color:#ff6b6b}.complete,.downloaded{color:#56d879}.bar{height:3px;background:#26262d;margin-top:8px}.fill{height:100%;background:#3c82f6}</style></head><body><div class="top"><div class="row"><span class="dot"></span><h1>GifGrab</h1><label><input id="convert" type="checkbox"> Convert to GIF</label><button class="secondary" onclick="retry()">Retry failed</button><button class="secondary" onclick="openDiagnostics()">Error details</button><button class="clear" title="Clears the list only. Downloaded files stay on your computer." onclick="clearDownloads()">Clear downloads</button><button onclick="openFolder()">Open Downloads</button></div></div><div class="stats" id="stats">Connecting…</div><main id="main"></main><script>let data={jobs:[]};async function api(path,opt){const response=await fetch('http://127.0.0.1:17878'+path,opt);const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result}async function refresh(){try{data=await api('/api/status');convert.checked=data.convert;render()}catch{}setTimeout(refresh,1000)}function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}function render(){let c={};data.jobs.forEach(j=>c[j.status]=(c[j.status]||0)+1);stats.textContent=`${data.jobs.length} items · ${c.complete||0} converted · ${c.downloaded||0} downloaded · ${c.duplicate||0} duplicates · ${c.failed||0} failed`;main.innerHTML=data.jobs.length?data.jobs.map(j=>`<div class="job"><div><div class="title">${esc(j.title||j.pageUrl)}</div><div class="url">${esc(j.error||j.sourceUrl||j.pageUrl)}</div><div class="bar"><div class="fill" style="width:${Math.round((j.progress||0)*100)}%"></div></div></div><div class="status ${j.status}">${esc(j.status)}</div></div>`).join(''):'<div class="empty"><b>No animations queued</b>Open an animation listing and click “Collect This Page” in the browser extension.</div>'}convert.onchange=()=>api('/api/settings',{method:'POST',body:JSON.stringify({convert:convert.checked})});function retry(){api('/api/retry',{method:'POST'}).then(refresh).catch(e=>alert(e.message))}function openFolder(){api('/api/open',{method:'POST'}).catch(e=>alert(e.message))}function openDiagnostics(){api('/api/diagnostics',{method:'POST'}).catch(e=>alert(e.message))}function clearDownloads(){if(!confirm('Clear the download list? Downloaded WEBP and GIF files will stay on your computer.'))return;api('/api/clear',{method:'POST'}).then(refresh).catch(e=>alert(e.message))}refresh()</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width">
+  <title>GifGrab</title>
+  <style>
+    :root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;background:#101014;color:#f5f5f7;font:14px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+    .top{position:sticky;top:0;background:#18181d;border-bottom:1px solid #303038;padding:18px 22px;z-index:2}
+    .row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}h1{font-size:21px;margin:0 auto 0 0}.dot{width:9px;height:9px;border-radius:50%;background:#46d369}
+    button{border:0;border-radius:9px;padding:8px 13px;background:#3c82f6;color:white;font-weight:600;cursor:pointer}button.secondary{background:#2d2d35}button.clear{background:#2d2d35;color:#ff9a9a}
+    .folder-row{display:flex;align-items:center;gap:8px;margin-top:13px}.folder-row label{white-space:nowrap;color:#aaa}.folder-row input{flex:1;min-width:160px;background:#101014;border:1px solid #42424c;border-radius:8px;padding:8px 10px;color:#fff;font:inherit}
+    .stats{padding:14px 22px;color:#aaa}.empty{margin:70px auto;text-align:center;color:#999;max-width:420px}.empty b{display:block;color:#eee;font-size:18px;margin-bottom:8px}
+    .job{display:grid;grid-template-columns:1fr 115px;gap:12px;padding:13px 22px;border-top:1px solid #24242a}.title{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.url{font-size:11px;color:#888;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}.status{text-align:right;text-transform:capitalize;color:#aaa}.failed{color:#ff6b6b}.bar{height:3px;background:#26262d;margin-top:8px}.fill{height:100%;background:#3c82f6}
+  </style>
+</head>
+<body>
+  <div class="top">
+    <div class="row"><span class="dot"></span><h1>GifGrab</h1><label><input id="convert" type="checkbox"> Convert to GIF</label><button class="secondary" onclick="retry()">Retry failed</button><button class="secondary" onclick="openDiagnostics()">Error details</button><button class="clear" title="Clears the list only. Downloaded files stay on your computer." onclick="clearDownloads()">Clear downloads</button><button onclick="openFolder()">Open Downloads</button></div>
+    <div class="folder-row"><label for="folder">Save to</label><input id="folder" type="text" spellcheck="false" aria-label="Download folder path"><button class="secondary" onclick="browseFolder()">Browse…</button><button class="secondary" onclick="saveFolder()">Save location</button></div>
+  </div>
+  <div class="stats" id="stats">Connecting…</div><main id="main"></main>
+  <script>
+    let data={jobs:[]};
+    const convertControl=document.getElementById('convert');
+    const folderControl=document.getElementById('folder');
+    const statsControl=document.getElementById('stats');
+    const mainControl=document.getElementById('main');
+    async function api(path,opt){const response=await fetch('http://127.0.0.1:17878'+path,opt);const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');return result}
+    async function refresh(){try{data=await api('/api/status');convertControl.checked=data.convert;if(document.activeElement!==folderControl)folderControl.value=data.folder;render()}catch{}setTimeout(refresh,1000)}
+    function esc(s){return String(s||'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+    function render(){const failed=data.jobs.filter(j=>j.status==='failed').length;statsControl.textContent=`${data.jobs.length-failed} queued or in progress · ${failed} failed`;mainControl.innerHTML=data.jobs.length?data.jobs.map(j=>`<div class="job"><div><div class="title">${esc(j.title||j.pageUrl)}</div><div class="url">${esc(j.error||j.sourceUrl||j.pageUrl)}</div><div class="bar"><div class="fill" style="width:${Math.round((j.progress||0)*100)}%"></div></div></div><div class="status ${j.status}">${esc(j.status)}</div></div>`).join(''):'<div class="empty"><b>No animations queued</b>Open an animation listing and click “Collect This Page” in the browser extension.</div>'}
+    convertControl.onchange=()=>api('/api/settings',{method:'POST',body:JSON.stringify({convert:convertControl.checked})}).catch(e=>alert(e.message));
+    folderControl.onkeydown=e=>{if(e.key==='Enter')saveFolder()};
+    async function browseFolder(){try{const result=await api('/api/folder/pick',{method:'POST'});if(!result.canceled)folderControl.value=result.folder}catch(e){alert(e.message)}}
+    async function saveFolder(){try{const result=await api('/api/folder',{method:'POST',body:JSON.stringify({folder:folderControl.value.trim()})});folderControl.value=result.folder}catch(e){alert(e.message)}}
+    function retry(){api('/api/retry',{method:'POST'}).then(refresh).catch(e=>alert(e.message))}
+    function openFolder(){api('/api/open',{method:'POST'}).catch(e=>alert(e.message))}
+    function openDiagnostics(){api('/api/diagnostics',{method:'POST'}).catch(e=>alert(e.message))}
+    function clearDownloads(){if(!confirm('Clear the download list? Downloaded WEBP and GIF files will stay on your computer.'))return;api('/api/clear',{method:'POST'}).then(refresh).catch(e=>alert(e.message))}
+    refresh();
+  </script>
+</body>
+</html>
