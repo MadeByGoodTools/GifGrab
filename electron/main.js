@@ -64,8 +64,6 @@ async function safeRemote(url) {
   }
 }
 
-}
-
 function safeName(text, fallback) {
   const value = (text || '').replace(/<[^>]+>/g, '').replace(/[<>:"/\\|?*\x00-\x1f]+/g, ' ')
     .replace(/\s+/g, ' ').trim().replace(/[. ]+$/, '');
@@ -244,11 +242,15 @@ async function processJob(job) {
   job.error = '';
   await save();
   const resolved = await resolveDetail(job.pageUrl);
-  if (ageAmbiguous(job.title || resolved.title)) {
-    job.status = 'skipped';
-    job.error = 'Skipped because the title has unclear age-related wording';
+  const key = resolved.source.split('?')[0];
+  const duplicate = jobs.find((candidate) => candidate !== job &&
+    (candidate.sourceUrl || '').split('?')[0] === key && candidate.status !== 'failed');
+  if (duplicate) {
+    job.status = 'duplicate';
+    job.error = `Same source as ${duplicate.title || duplicate.pageUrl}`;
+    job.duplicateOf = duplicate.id;
     return save();
-
+  }
   job.sourceUrl = resolved.source;
   await save();
   const pageId = (job.pageUrl.match(/\/gifs\/(\d+)/) || [])[1] || idFor(resolved.source);
