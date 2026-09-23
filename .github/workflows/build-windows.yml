@@ -1,0 +1,63 @@
+name: Build Windows installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'electron/**'
+      - '.github/workflows/build-windows.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Enable pnpm
+        run: corepack enable
+
+      - name: Install app dependencies
+        working-directory: electron
+        run: pnpm install --frozen-lockfile
+
+      - name: Restore the pinned converter
+        shell: pwsh
+        run: |
+          $oldInstaller = Join-Path $env:RUNNER_TEMP 'GifGrab-Windows-0.3.1.exe'
+          $unpacked = Join-Path $env:RUNNER_TEMP 'gifgrab-old'
+          Invoke-WebRequest 'https://github.com/MadeByGoodTools/GifGrab/releases/download/v0.3.1/GifGrab-Windows-0.3.1.exe' -OutFile $oldInstaller
+          7z x -y $oldInstaller "-o$unpacked"
+          $ffmpeg = Get-ChildItem $unpacked -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $ffmpeg) { throw 'The pinned GifGrab release did not contain ffmpeg.exe.' }
+          $converterDir = Join-Path $PWD 'electron/resources/ffmpeg/win-x64'
+          New-Item -ItemType Directory -Force $converterDir | Out-Null
+          Copy-Item $ffmpeg.FullName (Join-Path $converterDir 'ffmpeg.exe')
+
+      - name: Verify animated WEBP conversion
+        shell: pwsh
+        run: |
+          $sample = Join-Path $env:RUNNER_TEMP 'sample.webp'
+          $result = Join-Path $env:RUNNER_TEMP 'sample.gif'
+          Invoke-WebRequest 'https://imagex1.sx.cdn.live/images/pinporn/2023/08/25/29929346.webp' -OutFile $sample
+          & 'electron/resources/ffmpeg/win-x64/ffmpeg.exe' -hide_banner -loglevel error -y -i $sample -vf "fps=15,scale='min(1280,iw)':-1:flags=lanczos" $result
+          if ($LASTEXITCODE -ne 0 -or -not (Test-Path $result) -or (Get-Item $result).Length -eq 0) {
+            throw 'Animated WEBP conversion smoke test failed.'
+          }
+
+      - name: Build Good Tools installer
+        working-directory: electron
+        run: pnpm run dist:win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GoodTools-GifGrab-Windows-0.3.2
+          path: electron/dist/GoodTools-GifGrab-Setup-0.3.2-x64.exe
+          if-no-files-found: error

@@ -1,21 +1,19 @@
 {
   "name": "gifgrab",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Cross-platform batch animation collector and converter",
   "main": "main.js",
   "author": "Good Tools",
   "license": "UNLICENSED",
+  "packageManager": "pnpm@11.19.0",
   "scripts": {
     "start": "electron .",
     "dist:mac": "electron-builder --mac zip --arm64",
-    "dist:win": "electron-builder --win portable --x64"
+    "dist:win": "electron-builder --win nsis --x64"
   },
   "devDependencies": {
     "electron": "latest",
     "electron-builder": "latest"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["electron-winstaller"]
   },
   "build": {
     "appId": "ca.goodtools.gifgrab",
@@ -24,6 +22,16 @@
     "files": ["main.js", "ui/**/*", "package.json"],
     "extraResources": [{"from": "resources/ffmpeg", "to": "ffmpeg"}],
     "mac": {"category": "public.app-category.utilities", "target": ["zip"], "icon": "resources/GifGrab.icns"},
-    "win": {"target": ["portable"], "artifactName": "GifGrab-Windows-${version}.${ext}", "icon": "resources/GifGrab.ico"}
+    "win": {"target": ["nsis"], "artifactName": "GoodTools-GifGrab-Setup-${version}-${arch}.${ext}", "icon": "resources/GifGrab.ico"},
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "GifGrab",
+      "uninstallDisplayName": "GifGrab - Good Tools",
+      "deleteAppDataOnUninstall": false
+    }
   }
 }
