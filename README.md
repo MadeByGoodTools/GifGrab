@@ -4,13 +4,13 @@ GifGrab is a local Mac and Windows batch downloader with Chrome and Edge collect
 
 ## Install on macOS
 
-1. Unzip the Apple Silicon package for M-series Macs, or the Intel package for older Macs. Move `GifGrab.app` to Applications and open it.
+1. Open the Apple Silicon installer for M-series Macs, or the Intel installer for older Macs. Drag `GifGrab.app` to Applications and open it.
 2. Install the collector from your browser’s extension store. Separate builds are available for Chrome, Edge, Firefox, and Opera; Edge uses the teal icon edition.
 3. Visit a GIF listing and use **Collect This Page** or **Load More + Collect**. On other sites, GifGrab looks for media cards, direct animation links, and common detail-page media metadata.
 
 ## Install on Windows
 
-1. Run `GifGrab-Windows-0.3.1.exe`. It is a portable app and does not require an installer.
+1. Run `GoodTools-Installer-GifGrab-0.3.3-Windows-x64.exe` and follow the installation steps.
 2. Install the matching Chrome, Edge, Firefox, or Opera collector.
 3. Open an animation listing and collect it from the extension.
 
