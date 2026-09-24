@@ -1,6 +1,6 @@
 {
   "name": "gifgrab",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "Cross-platform batch animation collector and converter",
   "main": "main.js",
   "author": "Good Tools",

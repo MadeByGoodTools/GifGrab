@@ -1,4 +1,8 @@
-# GifGrab 0.3.7
+# GifGrab 0.3.8
+
+The desktop app now shows the actual animation count rather than the raw count of GIF cards plus page previews sent by older collectors. Stalled GIF conversions time out after 3 minutes without output (or 20 minutes total), mark only that item failed, and let the rest of the queue continue. Failed items can be retried. The browser collectors are unchanged.
+
+## GifGrab 0.3.7
 
 Each collection now gets its own timestamped folder, with `Originals` and `GIFs` inside it. The app shows separate selected, queued, saved, converted, failed, and duplicate counts for each scan, so completed items no longer vanish from the visible totals. It also ignores duplicate page previews sent by older Firefox collectors alongside GIF cards. A new scan no longer silently skips items that appeared in an earlier scan during the same app session. GIF conversions run one at a time to reduce memory pressure on large batches. The browser collectors are unchanged.
 

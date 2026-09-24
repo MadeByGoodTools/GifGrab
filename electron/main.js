@@ -141,10 +141,12 @@ function friendlyError(error, stage) {
     stage === 'saving' ? 'Saving the download failed' :
     stage === 'downloading' ? 'Media download failed' : 'Download failed';
   if (/\b429\b/.test(message)) return 'The site is limiting requests (429). Wait a few minutes, then retry failed items.';
+  if (code === 'ETIMEDOUT' || /timed? ?out|abort/i.test(`${message} ${code}`)) {
+    return `${prefix}: the operation timed out. Retry the failed item.`;
+  }
   if (/ffmpeg|enoent/i.test(`${message} ${code}`)) {
     return 'GIF conversion failed: the bundled converter could not start. Reinstall GifGrab with the Good Tools installer.';
   }
-  if (/timed? ?out|abort/i.test(`${message} ${code}`)) return `${prefix}: the request timed out. Retry the failed items.`;
   if (/fetch failed|econn|enotfound|tls|certificate/i.test(`${message} ${code}`)) {
     return `${prefix}: Windows could not reach the media server${code ? ` (${code})` : ''}. Retry, then check firewall or antivirus access for GifGrab.`;
   }
@@ -234,13 +236,46 @@ function ffmpegPath() {
   return fs.existsSync(bundled) ? bundled : 'ffmpeg';
 }
 
-function run(command, args) {
+function run(command, args, { inactivityMs = 180000, maxMs = 1200000 } = {}) {
   return new Promise((resolve, reject) => {
     const processHandle = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
     let stderr = '';
-    processHandle.stderr.on('data', (chunk) => { stderr = `${stderr}${chunk}`.slice(-4000); });
-    processHandle.on('error', reject);
-    processHandle.on('exit', (code) => code === 0 ? resolve() : reject(Error(`FFmpeg exited with code ${code}: ${stderr.trim()}`)));
+    let finished = false;
+    let inactivityTimer;
+    let maxTimer;
+    let terminationTimer;
+    let timeoutError;
+    function finish(error) {
+      if (finished) return;
+      finished = true;
+      clearTimeout(inactivityTimer);
+      clearTimeout(maxTimer);
+      clearTimeout(terminationTimer);
+      error ? reject(error) : resolve();
+    }
+    function timeout(reason) {
+      if (finished || timeoutError) return;
+      const error = Error(`FFmpeg timed out ${reason}. This item can be retried.`);
+      error.code = 'ETIMEDOUT';
+      timeoutError = error;
+      clearTimeout(inactivityTimer);
+      clearTimeout(maxTimer);
+      terminationTimer = setTimeout(() => finish(error), 5000);
+      try { processHandle.kill('SIGKILL'); } catch { finish(error); }
+    }
+    function watchActivity() {
+      if (timeoutError) return;
+      clearTimeout(inactivityTimer);
+      inactivityTimer = setTimeout(() => timeout('after 3 minutes without output'), inactivityMs);
+    }
+    processHandle.stderr.on('data', (chunk) => {
+      stderr = `${stderr}${chunk}`.slice(-4000);
+      watchActivity();
+    });
+    processHandle.on('error', finish);
+    processHandle.on('close', (code) => finish(timeoutError || (code === 0 ? null : Error(`FFmpeg exited with code ${code}: ${stderr.trim()}`))));
+    watchActivity();
+    maxTimer = setTimeout(() => timeout('after 20 minutes total'), maxMs);
   });
 }
 
@@ -265,6 +300,7 @@ async function convert(job, source, name) {
         await run(ffmpegPath(), ['-y', '-i', source, '-vf', `${scale},palettegen=stats_mode=diff`, palette]);
         await run(ffmpegPath(), ['-y', '-i', source, '-i', palette, '-lavfi', `${scale}[x];[x][1:v]paletteuse=dither=sierra2_4a`, temporaryOutput]);
       } catch (primaryError) {
+        if (primaryError.code === 'ETIMEDOUT') throw primaryError;
         await fsp.rm(temporaryOutput, { force: true });
         try {
           await run(ffmpegPath(), ['-y', '-i', source, '-vf', scale, temporaryOutput]);
